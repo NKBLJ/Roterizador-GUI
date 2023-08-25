@@ -26,11 +26,17 @@ for coord in coords:
     folium.Marker(location=list(reversed(coord))).add_to(m)
 
 folium.Marker(location=list(reversed(vehicle_start)), icon=folium.Icon(color="red")).add_to(m)
-vehicles = [{"id":1,"profile":"driving-car","start":vehicle_start,"end":vehicle_start, "capacity": [2]},
-            {"id":2,"profile":"driving-car","start":vehicle_start,"end":vehicle_start, "capacity": [3]},
-            {"id":3,"profile":"driving-car","start":vehicle_start,"end":vehicle_start, "capacity": [2]}]
+vehicles = [{"id":0,"profile":"driving-car","start":vehicle_start,"end":vehicle_start, "capacity": [2], "costs": {"per_hour": [1]}},
+            {"id":1,"profile":"driving-car","start":vehicle_start,"end":vehicle_start, "capacity": [3], "costs": {"per_hour": [400]}},
+            {"id":2,"profile":"driving-car","start":vehicle_start,"end":vehicle_start, "capacity": [3], "costs": {"per_hour": [400]}}]
 
 jobs = [{"id": index+1, "location": coords, "amount": [1]} for index, coords in enumerate(coords)]
+
+costs = [
+    [0.4, 0.4],  # Custo para veículo 1
+    [1, 1],
+    [1, 1]
+]
 
 # Requisição
 headers = {
@@ -40,24 +46,23 @@ headers = {
 
 data = {
     "jobs": jobs,
-    "vehicles": vehicles
+    "vehicles": vehicles,
+    "options": {
+        "g": True  # Solicita a inclusão da geometria
+    },
+    "costs": costs
 }
 
 
 response = requests.post(base_url, json=data, headers=headers)
 
-if response.status_code == 200:
-    optimized = response.json()
-    print(optimized)
-    line_colors = ['green', 'orange', 'blue', 'yellow']
-    for route in optimized['routes']:
-        print(route)
-    #     folium.PolyLine(
-    #         locations=[list(reversed(coords)) for coords in
-    #                    ors.convert.decode_polyline(route['geometry'])['coordinates']],
-    #         color=line_colors[route['vehicle']]).add_to(m)
-    # m.save('mapa.html')
-else:
-    print(f"Request failed with status code: {response.status_code}")
-    print(response.text)
+optimized = response.json()
+print(optimized)
 
+line_colors = ['green', 'orange', 'blue', 'yellow']
+for route in optimized['routes']:
+    folium.PolyLine(
+        locations=[list(reversed(coords)) for coords in ors.convert.decode_polyline(route['geometry'])['coordinates']],
+        color=line_colors[route['vehicle']]).add_to(m)
+
+m.save('mapa.html')
