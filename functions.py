@@ -27,4 +27,9 @@ def otimizar_rota(api_key, jobs, vehicles):
 
     response = requests.post(base_url, json=data, headers=headers)
 
+    if response.status_code == 200:
+        response = response.json()
+    else:
+        print('Erro: {}'.format(response))
+
     return response
