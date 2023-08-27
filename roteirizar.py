@@ -1,5 +1,5 @@
 import folium
-from functions import otimizar_rota
+from functions import otimizar_rota, dist_numero
 import openrouteservice as ors
 
 
@@ -51,6 +51,8 @@ def roteirizar(coord_g, coord_p, cap_moto):
         if otimizado['routes'][1]['cost'] > rota_moto['cost']:
             rota_moto = otimizado['routes'][1]
 
+    distancia = rota_moto['distance']/4
+
     # Marcar a rota selecionada no mapa
     folium.PolyLine(
         locations=[list(reversed(coords)) for coords in ors.convert.decode_polyline(rota_moto['geometry'])['coordinates']],
@@ -60,8 +62,29 @@ def roteirizar(coord_g, coord_p, cap_moto):
     excluir = {rota_moto['steps'][i+1]['id'] for i in range(len(rota_moto['steps']) - 2)}
     jobs = [job for job in jobs if job['id'] not in excluir]
 
+    # Capacidade dos veiculos que sobraram
+    capacidades = dist_numero(len(jobs))
+
+    # Colocar os carros furgões
+    vehicles = [{"id": index + 1, "profile": "driving-car", "start": list(reversed(sede)), "end": list(reversed(sede)),
+                 "capacity": [capacidade], "skills": [1,2]} for index, capacidade in enumerate(capacidades)]
+
     # Refazer requisição com 3 veículos e os jobs que sobraram
-    # TODO: Continuar daqui
+    otimizado = otimizar_rota(api_key, jobs, vehicles)
+    for i in otimizado['routes']:
+        distancia += i['distance']
+
+    print(distancia)
+    # Marcar as 3 rotas restantes em cores diferentes
+    line_colors = ['green', 'orange', 'blue', 'yellow']
+    for route in otimizado['routes']:
+        folium.PolyLine(
+            locations=[list(reversed(coords)) for coords in ors.convert.decode_polyline(route['geometry'])['coordinates']],
+            color=line_colors[route['vehicle']]).add_to(m)
+
+    # Salvar o mapa
+    m.save('mapa.html')
+
 
 if __name__ == '__main__':
     coord_g = [('-5.0835298', '-42.8165683'), ('-5.0651632', '-42.7936305'), ('-5.0442248', '-42.8310981'),
@@ -75,5 +98,5 @@ if __name__ == '__main__':
     coord_p = [('-5.0888927', '-42.8142082'), ('-5.057743', '-42.818781'), ('-5.0653836', '-42.7993096'),
                ('-5.0340124', '-42.8152407'), ('-5.092503', '-42.736583'), ('-5.1401542', '-42.7926263'),
                ('-5.1511816', '-42.7805975'), ('-5.116329', '-42.7546262')]
-    cap_moto = 5
+    cap_moto = 3
     roteirizar(coord_g, coord_p, cap_moto)
