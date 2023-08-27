@@ -1,4 +1,5 @@
 import requests
+import re
 
 
 def dist_numero(number):
@@ -33,3 +34,11 @@ def otimizar_rota(api_key, jobs, vehicles):
         print('Erro: {}'.format(response))
 
     return response
+
+def link_em_coords(link):
+    """A função recebe o link do Google maps com os pontos da rota e retorna uma lista de tuplas com as cordenadas
+    na forma [(lat, long)...]"""
+    busca = re.compile(r'/(-?\d*.\d*,-?\d*.\d*)')
+    lista = busca.findall(link)
+    lista = [(lat, long) for lat, long in (coord.split(',') for coord in lista)]
+    return lista
