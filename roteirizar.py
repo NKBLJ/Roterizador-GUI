@@ -1,5 +1,5 @@
 import folium
-from functions import otimizar_rota, dist_numero
+from functions import otimizar_rota, dist_numero, add_categorical_legend
 import openrouteservice as ors
 
 
@@ -16,53 +16,59 @@ def roteirizar(coord_g, coord_p, cap_moto):
     coord_g = list(map(lambda lat_long: [float(lat_long[0]), float(lat_long[1])], coord_g))
 
     # Criar mapa com todos os pontos
-    m = folium.Map(location=sede, tiles="cartodbpositron", zoom_start=14)
+    m = folium.Map(location=sede, tiles="cartodbpositron", zoom_start=13)
     folium.Marker(location=sede, icon=folium.Icon(color="red")).add_to(m)
     for coord in coord_p+coord_g:
         folium.Marker(location=coord).add_to(m)
 
-    # Criar os jobs pequenos
-    jobs_p = [{"id": index + 1, "location": list(reversed(coords)), "amount": [1], 'skills': [1]} for index, coords in enumerate(coord_p)]
-    # Criar os jobs grandes
-    qtd_p = len(jobs_p)
-    jobs_g = [{"id": index + qtd_p + 1, "location": list(reversed(coords)), "amount": [1], 'skills': [2]} for index, coords in enumerate(coord_g)]
-    qtd_g = len(jobs_g)
+    distancia = []
 
-    # Concatenar os jobs
-    jobs = jobs_p + jobs_g
+    if cap_moto > 0:
+        # Criar os jobs pequenos
+        jobs_p = [{"id": index + 1, "location": list(reversed(coords)), "amount": [1], 'skills': [1]} for index, coords in enumerate(coord_p)]
+        # Criar os jobs grandes
+        qtd_p = len(jobs_p)
+        jobs_g = [{"id": index + qtd_p + 1, "location": list(reversed(coords)), "amount": [1], 'skills': [2]} for index, coords in enumerate(coord_g)]
+        qtd_g = len(jobs_g)
 
-    # Criar os veículos (duas motos e um carro com o restante da capacidade) Requisitar a api
-    if cap_moto <= qtd_p / 2:
-        capacidades = [cap_moto, cap_moto, qtd_g + qtd_p - 2 * cap_moto]
+        # Concatenar os jobs
+        jobs = jobs_p + jobs_g
+
+        # Criar os veículos (duas motos e um carro com o restante da capacidade) Requisitar a api
+        if cap_moto <= qtd_p / 2:
+            capacidades = [cap_moto, cap_moto, qtd_g + qtd_p - 2 * cap_moto]
+        else:
+            capacidades = [cap_moto, 0, qtd_g + qtd_p - cap_moto]
+        if cap_moto > qtd_p:
+            capacidades = [qtd_p, 0, qtd_g]
+        skills = [[1], [1], [1, 2]]
+        vehicles = [{"id": index+1, "profile": "driving-car", "start": list(reversed(sede)), "end": list(reversed(sede)),
+                     "capacity": [capacidade], "skills":skills[index]} for index, capacidade in enumerate(capacidades)]
+
+        # Requisitar api
+        otimizado = otimizar_rota(api_key, jobs, vehicles)
+
+        # Pegar a rota com maior duração (entre as duas motos) da api
+        rota_moto = otimizado['routes'][0]
+        if len(otimizado['routes']) == 3:
+            if otimizado['routes'][1]['cost'] > rota_moto['cost']:
+                rota_moto = otimizado['routes'][1]
+
+        distancia.append(rota_moto['distance'])
+
+        # Marcar a rota selecionada no mapa
+        folium.PolyLine(
+            locations=[list(reversed(coords)) for coords in ors.convert.decode_polyline(rota_moto['geometry'])['coordinates']],
+            color='black').add_to(m)
+
+        # Excluir jobs da rota já feita
+        excluir = {rota_moto['steps'][i+1]['id'] for i in range(len(rota_moto['steps']) - 2)}
+        jobs = [job for job in jobs if job['id'] not in excluir]
+
     else:
-        capacidades = [cap_moto, 0, qtd_g + qtd_p - cap_moto]
-    if cap_moto > qtd_p:
-        capacidades = [qtd_p, 0, qtd_g]
-    skills = [[1], [1], [1, 2]]
-    vehicles = [{"id": index+1, "profile": "driving-car", "start": list(reversed(sede)), "end": list(reversed(sede)),
-                 "capacity": [capacidade], "skills":skills[index]} for index, capacidade in enumerate(capacidades)]
+        distancia.append(0)
 
-    # Requisitar api
-    otimizado = otimizar_rota(api_key, jobs, vehicles)
-
-    # Pegar a rota com maior duração (entre as duas motos) da api
-    rota_moto = otimizado['routes'][0]
-    if len(otimizado['routes']) == 3:
-        if otimizado['routes'][1]['cost'] > rota_moto['cost']:
-            rota_moto = otimizado['routes'][1]
-
-    distancia = rota_moto['distance']/4
-
-    # Marcar a rota selecionada no mapa
-    folium.PolyLine(
-        locations=[list(reversed(coords)) for coords in ors.convert.decode_polyline(rota_moto['geometry'])['coordinates']],
-        color='black').add_to(m)
-
-    # Excluir jobs da rota já feita
-    excluir = {rota_moto['steps'][i+1]['id'] for i in range(len(rota_moto['steps']) - 2)}
-    jobs = [job for job in jobs if job['id'] not in excluir]
-
-    # Capacidade dos veiculos que sobraram
+    # Capacidade dos veículos que sobraram
     capacidades = dist_numero(len(jobs))
 
     # Colocar os carros furgões
@@ -72,15 +78,18 @@ def roteirizar(coord_g, coord_p, cap_moto):
     # Refazer requisição com 3 veículos e os jobs que sobraram
     otimizado = otimizar_rota(api_key, jobs, vehicles)
     for i in otimizado['routes']:
-        distancia += i['distance']
+        distancia.append(i['distance'])
 
-    print(distancia)
     # Marcar as 3 rotas restantes em cores diferentes
     line_colors = ['green', 'orange', 'blue', 'yellow']
     for route in otimizado['routes']:
         folium.PolyLine(
             locations=[list(reversed(coords)) for coords in ors.convert.decode_polyline(route['geometry'])['coordinates']],
             color=line_colors[route['vehicle']]).add_to(m)
+
+    m = add_categorical_legend(m, f'Custo: {(sum(distancia)-(3/4)*distancia[0])/10000} L<br>Total: {str(sum(distancia)/1000).replace(".", ",")} Km',
+                               colors=["#000", "#FA0", "#00F", "#FF0"],
+                               labels=[f'{dist: ,} Km' for dist in distancia])
 
     # Salvar o mapa
     m.save('mapa.html')
@@ -98,5 +107,5 @@ if __name__ == '__main__':
     coord_p = [('-5.0888927', '-42.8142082'), ('-5.057743', '-42.818781'), ('-5.0653836', '-42.7993096'),
                ('-5.0340124', '-42.8152407'), ('-5.092503', '-42.736583'), ('-5.1401542', '-42.7926263'),
                ('-5.1511816', '-42.7805975'), ('-5.116329', '-42.7546262')]
-    cap_moto = 3
+    cap_moto = 9
     roteirizar(coord_g, coord_p, cap_moto)
