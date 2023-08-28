@@ -69,7 +69,7 @@ def roteirizar(coord_g, coord_p, cap_moto):
         distancia.append(0)
 
     # Capacidade dos veículos que sobraram
-    capacidades = dist_numero(len(jobs))
+    capacidades = dist_numero(len(jobs), 3)
 
     # Colocar os carros furgões
     vehicles = [{"id": index + 1, "profile": "driving-car", "start": list(reversed(sede)), "end": list(reversed(sede)),

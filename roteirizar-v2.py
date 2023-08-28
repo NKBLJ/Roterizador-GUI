@@ -1,14 +1,22 @@
 import folium
-from functions import otimizar_rota, dist_numero
+from functions import otimizar_rota, dist_numero, add_categorical_legend
 import openrouteservice as ors
-from folium.plugins import MeasureControl
 
 
-# Adicionar limitação de tempo
-def roteirizar(coord_g, coord_p, cap_moto):
+# Com restrição de tempo nas entregas
+def roteirizar(coord_g, coord_p, cap_moto, tempo, qtd_veic):
+    """Recebe:
+    coord_g: Coordenadas dos objetos grandes
+    coord_p: Coordenadas dos objetos pequenos
+    cap_moto: A capacidade de objetos que a moto transporta
+    tempo: Tempo em horas para realizar as entregas
+    """
     # Pegar Key da API
     with open("api-key.txt", "r") as file:
         api_key = file.readline().strip()
+
+    # Hora final dos veiculos
+    final = int((8 + tempo) * 60*60)
 
     # Coordenada da sede:
     sede = [-5.069952794832667, -42.82680303516773]
@@ -18,22 +26,28 @@ def roteirizar(coord_g, coord_p, cap_moto):
     coord_g = list(map(lambda lat_long: [float(lat_long[0]), float(lat_long[1])], coord_g))
 
     # Criar mapa com todos os pontos
-    m = folium.Map(location=sede, tiles="cartodbpositron", zoom_start=14)
+    m = folium.Map(location=sede, tiles="cartodbpositron", zoom_start=13)
     folium.Marker(location=sede, icon=folium.Icon(color="red")).add_to(m)
     for coord in coord_p+coord_g:
         folium.Marker(location=coord).add_to(m)
 
+    # Indicadores
+    distancia = []
+    duracao = []
+
+    # Criar os jobs pequenos
+    jobs_p = [{"id": index + 1, "location": list(reversed(coords)), "amount": [1], 'skills': [1]} for index, coords in
+              enumerate(coord_p)]
+    # Criar os jobs grandes
+    qtd_p = len(jobs_p)
+    jobs_g = [{"id": index + qtd_p + 1, "location": list(reversed(coords)), "amount": [1], 'skills': [2]} for
+              index, coords in enumerate(coord_g)]
+    qtd_g = len(jobs_g)
+
+    # Concatenar os jobs
+    jobs = jobs_p + jobs_g
+
     if cap_moto > 0:
-        # Criar os jobs pequenos
-        jobs_p = [{"id": index + 1, "location": list(reversed(coords)), "amount": [1], 'skills': [1]} for index, coords in enumerate(coord_p)]
-        # Criar os jobs grandes
-        qtd_p = len(jobs_p)
-        jobs_g = [{"id": index + qtd_p + 1, "location": list(reversed(coords)), "amount": [1], 'skills': [2]} for index, coords in enumerate(coord_g)]
-        qtd_g = len(jobs_g)
-
-        # Concatenar os jobs
-        jobs = jobs_p + jobs_g
-
         # Criar os veículos (duas motos e um carro com o restante da capacidade) Requisitar a api
         if cap_moto <= qtd_p / 2:
             capacidades = [cap_moto, cap_moto, qtd_g + qtd_p - 2 * cap_moto]
@@ -43,7 +57,7 @@ def roteirizar(coord_g, coord_p, cap_moto):
             capacidades = [qtd_p, 0, qtd_g]
         skills = [[1], [1], [1, 2]]
         vehicles = [{"id": index+1, "profile": "driving-car", "start": list(reversed(sede)), "end": list(reversed(sede)),
-                     "capacity": [capacidade], "skills":skills[index]} for index, capacidade in enumerate(capacidades)]
+                     "capacity": [capacidade], "skills":skills[index], "time_window": [28800, final]} for index, capacidade in enumerate(capacidades)]
 
         # Requisitar api
         otimizado = otimizar_rota(api_key, jobs, vehicles)
@@ -54,7 +68,8 @@ def roteirizar(coord_g, coord_p, cap_moto):
             if otimizado['routes'][1]['cost'] > rota_moto['cost']:
                 rota_moto = otimizado['routes'][1]
 
-        distancia = rota_moto['distance']/4
+        distancia.append(rota_moto['distance'])
+        duracao.append((rota_moto['duration']))
 
         # Marcar a rota selecionada no mapa
         folium.PolyLine(
@@ -65,30 +80,37 @@ def roteirizar(coord_g, coord_p, cap_moto):
         excluir = {rota_moto['steps'][i+1]['id'] for i in range(len(rota_moto['steps']) - 2)}
         jobs = [job for job in jobs if job['id'] not in excluir]
 
+    else:
+        distancia.append(0)
+
     # Capacidade dos veículos que sobraram
-    capacidades = dist_numero(len(jobs))
+    capacidades = dist_numero(len(jobs), qtd_veic)
 
     # Colocar os carros furgões
     vehicles = [{"id": index + 1, "profile": "driving-car", "start": list(reversed(sede)), "end": list(reversed(sede)),
-                 "capacity": [capacidade], "skills": [1,2]} for index, capacidade in enumerate(capacidades)]
+                 "capacity": [capacidade], "skills": [1,2], "time_window": [28800, final]} for index, capacidade in enumerate(capacidades)]
 
     # Refazer requisição com 3 veículos e os jobs que sobraram
     otimizado = otimizar_rota(api_key, jobs, vehicles)
-    for i in otimizado['routes']:
-        distancia += i['distance']
 
-    print(distancia)
     # Marcar as 3 rotas restantes em cores diferentes
     line_colors = ['green', 'orange', 'blue', 'yellow']
     for route in otimizado['routes']:
+        distancia.append((route['distance']))
+        duracao.append((route['duration']))
         folium.PolyLine(
             locations=[list(reversed(coords)) for coords in ors.convert.decode_polyline(route['geometry'])['coordinates']],
             color=line_colors[route['vehicle']]).add_to(m)
 
-    legend_html = f"<div style='position: fixed; bottom: 50px; right: 50px; padding: 10px; background-color: white; border: 2px solid grey;'><b>Distância Total:</b><br>{distancia:.2f} km</div>"
-    m.get_root().html.add_child(folium.Element(legend_html))
+    # Concertar duração e distancia
+    duracao = (sum(duracao) / len(duracao))/60
+    distancia = distancia + [0]*(4 - len(distancia))
 
-    MeasureControl(primary_length_unit='kilometers').add_to(m)
+    m = add_categorical_legend(m, f'Custo: {(sum(distancia)-(3/4)*distancia[0])/10000} L<br>'
+                                  f'Total: {str(sum(distancia)/1000).replace(".", ",")} Km<br>'
+                                  f'Tempo Médio:<br>{duracao//60:.0f}Hr {duracao%60:.0f} Min',
+                               colors=["#000", "#FA0", "#00F", "#FF0"],
+                               labels=[f'{dist: ,} Km' for dist in distancia])
 
     # Salvar o mapa
     m.save('mapa.html')
@@ -106,5 +128,7 @@ if __name__ == '__main__':
     coord_p = [('-5.0888927', '-42.8142082'), ('-5.057743', '-42.818781'), ('-5.0653836', '-42.7993096'),
                ('-5.0340124', '-42.8152407'), ('-5.092503', '-42.736583'), ('-5.1401542', '-42.7926263'),
                ('-5.1511816', '-42.7805975'), ('-5.116329', '-42.7546262')]
-    cap_moto = 3
-    roteirizar(coord_g, coord_p, cap_moto)
+    cap_moto = 9
+    tempo = 3
+    qtd_veic = 3
+    roteirizar(coord_g, coord_p, cap_moto, tempo, qtd_veic)

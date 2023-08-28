@@ -3,10 +3,10 @@ import re
 import folium
 
 
-def dist_numero(number):
+def dist_numero(number, qtd):
     """Função que distribui os números numa lista de 3"""
-    quotient, remainder = divmod(number, 3)
-    result = [quotient + (1 if i < remainder else 0) for i in range(3)]
+    quotient, remainder = divmod(number, qtd)
+    result = [quotient + (1 if i < remainder else 0) for i in range(qtd)]
     return result
 
 
